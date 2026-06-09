@@ -2,26 +2,40 @@ import { create } from 'zustand'
 import type { RideOrder } from '@/types'
 import { api } from '@/utils/api'
 
+interface UnlockResult {
+  orderId: string | null
+  needDeposit: boolean
+  depositAmount: number
+  vehicleCode: string
+  message?: string
+  startTime?: string
+}
+
 interface RideState {
   currentRide: RideOrder | null
   rideHistory: RideOrder[]
   fee: number
-  unlock: (vehicleId: string, paidDeposit: boolean) => Promise<RideOrder>
+  lastReturnResult: { fee: number; dispatchFee: number; totalFee: number; inFence: boolean; creditDeducted: number; balanceInsufficient: boolean; newBalance: number; newCreditScore: number } | null
+  unlock: (vehicleId: string, paidDeposit: boolean) => Promise<UnlockResult>
   reportPosition: (orderId: string, lat: number, lng: number) => Promise<void>
   returnBike: (orderId: string, lat: number, lng: number) => Promise<RideOrder>
   fetchHistory: () => Promise<void>
   fetchRide: (id: string) => Promise<void>
+  clearReturnResult: () => void
 }
 
 export const useRideStore = create<RideState>((set) => ({
   currentRide: null,
   rideHistory: [],
   fee: 0,
+  lastReturnResult: null,
 
   unlock: async (vehicleId, paidDeposit) => {
-    const order = await api.post<RideOrder>('/rides/unlock', { vehicleId, paidDeposit })
-    set({ currentRide: order })
-    return order
+    const result = await api.post<UnlockResult>('/rides/unlock', { vehicleId, paidDeposit })
+    if (result.orderId) {
+      set({ currentRide: { id: result.orderId, vehicleId, startTime: result.startTime || '', status: 'riding', fee: 0, dispatchFee: 0, distance: 0, duration: 0, inFence: true, creditDeducted: 0, userId: '', startLat: 0, startLng: 0 } as RideOrder })
+    }
+    return result
   },
 
   reportPosition: async (orderId, lat, lng) => {
@@ -29,9 +43,13 @@ export const useRideStore = create<RideState>((set) => ({
   },
 
   returnBike: async (orderId, lat, lng) => {
-    const order = await api.post<RideOrder>(`/rides/${orderId}/return`, { lat, lng })
-    set({ currentRide: null, fee: order.fee })
-    return order
+    const result = await api.post<any>(`/rides/${orderId}/return`, { lat, lng })
+    set({
+      currentRide: null,
+      fee: result.fee,
+      lastReturnResult: result,
+    })
+    return result as RideOrder
   },
 
   fetchHistory: async () => {
@@ -43,4 +61,6 @@ export const useRideStore = create<RideState>((set) => ({
     const ride = await api.get<RideOrder>(`/rides/${id}`)
     set({ currentRide: ride })
   },
+
+  clearReturnResult: () => set({ lastReturnResult: null }),
 }))

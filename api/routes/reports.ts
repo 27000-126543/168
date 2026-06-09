@@ -87,6 +87,24 @@ router.post('/generate', authMiddleware, requireRole('admin'), async (req: Reque
       }
     }
 
+    const supervisors = queryAll("SELECT * FROM users WHERE role = 'supervisor'")
+    for (const sup of supervisors) {
+      run(
+        'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [`nrg_s${Date.now()}${sup.id}`, sup.id, 'system', `${month}月度运营报告已生成`, `${month}月度运营报告已生成，请查看各区域骑行量、收入和运维成本数据。`, month]
+      )
+    }
+
+    const allAdmins = queryAll("SELECT * FROM users WHERE role = 'admin'")
+    for (const admin of allAdmins) {
+      if (admin.id !== req.user!.id) {
+        run(
+          'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [`nrg_a${Date.now()}${admin.id}`, admin.id, 'system', `${month}月度运营报告已生成`, `${month}月度运营报告已生成，请查看各区域骑行量、收入和运维成本数据。`, month]
+        )
+      }
+    }
+
     res.json({ success: true, data: { month, message: '月度报告已生成' } })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })

@@ -85,7 +85,10 @@ export default function UserHome() {
 
   const handleUnlock = async (paidDeposit: boolean) => {
     try {
-      await unlock(rec?.id || '1', paidDeposit)
+      const result = await unlock(rec?.id || '1', paidDeposit)
+      if (result.needDeposit && !result.orderId) {
+        return
+      }
       setShowCredit(false)
       navigate('/user/riding')
     } catch {}

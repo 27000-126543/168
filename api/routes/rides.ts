@@ -52,7 +52,7 @@ function calculateFee(distance: number, durationMin: number, pricingRule: any): 
 
 router.post('/unlock', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { vehicleId } = req.body
+    const { vehicleId, paidDeposit } = req.body
     const userId = req.user!.id
 
     const vehicle = queryOne('SELECT * FROM vehicles WHERE id = ?', [vehicleId])
@@ -71,9 +71,23 @@ router.post('/unlock', authMiddleware, async (req: Request, res: Response): Prom
       return
     }
 
-    let needDeposit = false
-    if (user.credit_score < 60 && user.deposit < 199) {
-      needDeposit = true
+    const needDeposit = user.credit_score < 60 && user.deposit < 199
+    if (needDeposit && !paidDeposit) {
+      res.json({
+        success: true,
+        data: {
+          orderId: null,
+          needDeposit: true,
+          depositAmount: 199,
+          vehicleCode: vehicle.code,
+          message: '信用分不足，请先缴纳押金',
+        },
+      })
+      return
+    }
+
+    if (needDeposit && paidDeposit) {
+      run('UPDATE users SET deposit = 199 WHERE id = ?', [userId])
     }
 
     const orderId = 'r' + Date.now()
@@ -93,8 +107,8 @@ router.post('/unlock', authMiddleware, async (req: Request, res: Response): Prom
       success: true,
       data: {
         orderId,
-        needDeposit,
-        depositAmount: needDeposit ? 199 : 0,
+        needDeposit: false,
+        depositAmount: 0,
         vehicleCode: vehicle.code,
         startTime: now,
       },
@@ -164,6 +178,22 @@ router.post('/:id/return', authMiddleware, async (req: Request, res: Response): 
 
     const totalFee = Math.round((fee + dispatchFee) * 100) / 100
 
+    const user = queryOne('SELECT * FROM users WHERE id = ?', [req.user!.id])
+    const currentBalance = user ? user.balance : 0
+    const currentCredit = user ? user.credit_score : 100
+    const balanceInsufficient = currentBalance < totalFee
+    const newBalance = balanceInsufficient ? currentBalance : Math.round((currentBalance - totalFee) * 100) / 100
+
+    if (!balanceInsufficient) {
+      run('UPDATE users SET balance = ? WHERE id = ?', [newBalance, req.user!.id])
+    }
+
+    let newCreditScore = currentCredit
+    if (creditDeducted > 0) {
+      newCreditScore = Math.max(0, currentCredit - creditDeducted)
+      run('UPDATE users SET credit_score = ? WHERE id = ?', [newCreditScore, req.user!.id])
+    }
+
     run(
       'UPDATE ride_orders SET end_time=?, end_lat=?, end_lng=?, distance=?, duration=?, fee=?, dispatch_fee=?, credit_deducted=?, in_fence=?, status=? WHERE id=?',
       [now, lat, lng, distance, durationMin, fee, dispatchFee, creditDeducted, inFence ? 1 : 0, 'completed', orderId]
@@ -176,17 +206,22 @@ router.post('/:id/return', authMiddleware, async (req: Request, res: Response): 
     run('UPDATE vehicles SET status=?, lat=?, lng=?, battery=?, last_report_time=? WHERE id=?',
       [newStatus, lat, lng, newBattery, now, order.vehicle_id])
 
-    if (creditDeducted > 0) {
-      run('UPDATE users SET credit_score = credit_score - ? WHERE id = ?', [creditDeducted, req.user!.id])
+    let notifyContent = ''
+    if (balanceInsufficient) {
+      notifyContent = inFence
+        ? `您已归还车辆，本次费用${totalFee}元。账户余额不足（余额${currentBalance.toFixed(2)}元），请及时充值。`
+        : `您在电子围栏外还车，加收调度费15元，扣信用分5分，本次费用${totalFee}元。账户余额不足（余额${currentBalance.toFixed(2)}元），欠费将记入待还款。`
+    } else {
+      notifyContent = inFence
+        ? `您已成功归还车辆，本次骑行费用${totalFee}元已从余额扣除，余额${newBalance.toFixed(2)}元。`
+        : `您在电子围栏外还车，加收调度费15元，扣信用分5分，本次费用${totalFee}元已从余额扣除，余额${newBalance.toFixed(2)}元。`
     }
 
     run(
       'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
       ['n' + Date.now(), req.user!.id, 'return',
         inFence ? '还车成功' : '还车提醒',
-        inFence
-          ? `您已成功归还车辆，本次骑行费用${totalFee}元`
-          : `您在电子围栏外还车，已加收调度费15元，扣除信用分5分，本次费用${totalFee}元`,
+        notifyContent,
         orderId]
     )
 
@@ -202,6 +237,9 @@ router.post('/:id/return', authMiddleware, async (req: Request, res: Response): 
         inFence,
         creditDeducted,
         newBattery,
+        balanceInsufficient,
+        newBalance,
+        newCreditScore,
       },
     })
   } catch (err: any) {

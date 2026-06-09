@@ -5,29 +5,31 @@ import { api } from '@/utils/api'
 interface ReportState {
   monthlyReports: MonthlyReport[]
   loading: boolean
-  fetchMonthly: () => Promise<void>
-  generateReport: () => Promise<void>
+  fetchMonthly: (month?: string) => Promise<void>
+  generateReport: (month: string) => Promise<void>
 }
 
 export const useReportStore = create<ReportState>((set) => ({
   monthlyReports: [],
   loading: false,
 
-  fetchMonthly: async () => {
+  fetchMonthly: async (month) => {
     set({ loading: true })
     try {
-      const monthlyReports = await api.get<MonthlyReport[]>('/reports/monthly')
+      const url = month ? `/reports/monthly?month=${month}` : '/reports/monthly'
+      const monthlyReports = await api.get<MonthlyReport[]>(url)
       set({ monthlyReports, loading: false })
     } catch {
       set({ loading: false })
     }
   },
 
-  generateReport: async () => {
+  generateReport: async (month) => {
     set({ loading: true })
     try {
-      const report = await api.post<MonthlyReport>('/reports/generate')
-      set((state) => ({ monthlyReports: [...state.monthlyReports, report], loading: false }))
+      await api.post('/reports/generate', { month })
+      const monthlyReports = await api.get<MonthlyReport[]>(`/reports/monthly?month=${month}`)
+      set({ monthlyReports, loading: false })
     } catch {
       set({ loading: false })
     }

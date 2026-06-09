@@ -1,11 +1,15 @@
+import { useEffect } from 'react'
 import { useAuthStore } from '@/stores/authStore'
 import { useNavigate } from 'react-router-dom'
 import { Bike, FileText, AlertTriangle, Bell, Settings, ChevronRight, Wallet, LogOut } from 'lucide-react'
 import BatteryBar from '@/components/BatteryBar'
 
 export default function Profile() {
-  const { user, logout } = useAuthStore()
+  const { user, logout, fetchMe } = useAuthStore()
   const navigate = useNavigate()
+
+  useEffect(() => { fetchMe() }, [fetchMe])
+
   const creditScore = user?.creditScore ?? 100
 
   const creditColor = creditScore >= 80 ? 'text-green-600' : creditScore >= 60 ? 'text-yellow-600' : 'text-red-600'

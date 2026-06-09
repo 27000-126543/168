@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polyline } from 'react-leaflet'
-import { Timer, MapPin, DollarSign, X, CheckCircle, AlertTriangle } from 'lucide-react'
+import { Timer, MapPin, DollarSign, X, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react'
 import { useRideStore } from '@/stores/rideStore'
+import { useAuthStore } from '@/stores/authStore'
 import { useNavigate } from 'react-router-dom'
 
 const MOCK_TRACK: [number, number][] = [
@@ -13,6 +14,7 @@ const MOCK_TRACK: [number, number][] = [
 ]
 
 function ReturnModal({ inFence, fee, dispatchFee, onConfirm, onClose }: { inFence: boolean; fee: number; dispatchFee: number; onConfirm: () => void; onClose: () => void }) {
+  const totalFee = fee + (inFence ? 0 : dispatchFee)
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center">
       <div className="bg-white rounded-t-2xl w-full max-w-lg p-6 animate-slide-up">
@@ -34,15 +36,43 @@ function ReturnModal({ inFence, fee, dispatchFee, onConfirm, onClose }: { inFenc
               <AlertTriangle className="w-5 h-5 text-red-600" />
               <span className="font-medium text-red-700">不在停车围栏内</span>
             </div>
-            <p className="text-sm text-red-600">需加收调度费 ¥{dispatchFee.toFixed(2)}，并扣除信用分</p>
+            <p className="text-sm text-red-600">需加收调度费 ¥{dispatchFee.toFixed(2)}，并扣除信用分5分</p>
           </div>
         )}
         <div className="bg-zinc-50 rounded-xl p-4 mb-4 space-y-2">
           <div className="flex justify-between text-sm"><span className="text-zinc-500">骑行费用</span><span className="number-font font-medium">¥{fee.toFixed(2)}</span></div>
           {!inFence && <div className="flex justify-between text-sm"><span className="text-red-500">调度费</span><span className="number-font font-medium text-red-500">¥{dispatchFee.toFixed(2)}</span></div>}
-          <div className="border-t border-zinc-200 pt-2 flex justify-between font-medium"><span>合计</span><span className="number-font text-brand-700">¥{(fee + (inFence ? 0 : dispatchFee)).toFixed(2)}</span></div>
+          <div className="border-t border-zinc-200 pt-2 flex justify-between font-medium"><span>合计</span><span className="number-font text-brand-700">¥{totalFee.toFixed(2)}</span></div>
         </div>
         <button onClick={onConfirm} className="w-full btn-primary py-2.5">确认还车</button>
+      </div>
+    </div>
+  )
+}
+
+function ReturnResultModal({ result, onClose }: { result: { fee: number; dispatchFee: number; totalFee: number; inFence: boolean; creditDeducted: number; balanceInsufficient: boolean; newBalance: number; newCreditScore: number } | null; onClose: () => void }) {
+  if (!result) return null
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm animate-slide-up">
+        <div className="text-center mb-4">
+          <CheckCircle className="w-12 h-12 text-brand-700 mx-auto mb-2" />
+          <h3 className="font-bold text-lg">还车完成</h3>
+        </div>
+        <div className="bg-zinc-50 rounded-xl p-4 mb-4 space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-zinc-500">骑行费用</span><span className="number-font">¥{result.fee.toFixed(2)}</span></div>
+          {result.dispatchFee > 0 && <div className="flex justify-between"><span className="text-red-500">调度费</span><span className="number-font text-red-500">¥{result.dispatchFee.toFixed(2)}</span></div>}
+          <div className="border-t border-zinc-200 pt-2 flex justify-between font-medium"><span>合计扣款</span><span className="number-font text-brand-700">¥{result.totalFee.toFixed(2)}</span></div>
+          <div className="flex justify-between"><span className="text-zinc-500">当前余额</span><span className="number-font">¥{result.newBalance.toFixed(2)}</span></div>
+          {result.creditDeducted > 0 && <div className="flex justify-between"><span className="text-zinc-500">信用分</span><span className="number-font text-red-500">{result.newCreditScore}分（-{result.creditDeducted}）</span></div>}
+        </div>
+        {result.balanceInsufficient && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-red-600">余额不足，欠费¥{(result.totalFee - result.newBalance).toFixed(2)}将记入待还款，请及时充值。</p>
+          </div>
+        )}
+        <button onClick={onClose} className="w-full btn-primary py-2.5">确定</button>
       </div>
     </div>
   )
@@ -54,7 +84,8 @@ export default function Riding() {
   const [fee, setFee] = useState(2.5)
   const [showReturn, setShowReturn] = useState(false)
   const [inFence] = useState(true)
-  const { reportPosition, currentRide, returnBike } = useRideStore()
+  const { reportPosition, currentRide, returnBike, lastReturnResult, clearReturnResult } = useRideStore()
+  const { fetchMe } = useAuthStore()
   const navigate = useNavigate()
   const timerRef = useRef<ReturnType<typeof setInterval>>()
   const reportRef = useRef<ReturnType<typeof setInterval>>()
@@ -80,8 +111,13 @@ export default function Riding() {
     try {
       await returnBike(currentRide?.id || '1', 39.91, 116.42)
       setShowReturn(false)
-      navigate('/user/history')
     } catch {}
+  }
+
+  const handleResultClose = async () => {
+    await fetchMe()
+    clearReturnResult()
+    navigate('/user/history')
   }
 
   const formatTime = (s: number) => {
@@ -123,6 +159,7 @@ export default function Riding() {
       </div>
 
       {showReturn && <ReturnModal inFence={inFence} fee={fee} dispatchFee={5} onConfirm={handleReturn} onClose={() => setShowReturn(false)} />}
+      {lastReturnResult && <ReturnResultModal result={lastReturnResult} onClose={handleResultClose} />}
     </div>
   )
 }

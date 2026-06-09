@@ -97,9 +97,10 @@ router.put('/tasks/:id', authMiddleware, requireRole('ops'), async (req: Request
 
     const now = new Date().toISOString()
     if (status === 'completed') {
+      const photos = repairPhotos ? JSON.stringify(repairPhotos) : null
       run(
         'UPDATE ops_tasks SET status=?, completed_at=?, repair_photos=? WHERE id=?',
-        ['completed', now, repairPhotos ? JSON.stringify(repairPhotos) : null, req.params.id]
+        ['completed', now, photos, req.params.id]
       )
 
       const vehicle = queryOne('SELECT * FROM vehicles WHERE id = ?', [task.vehicle_id])
@@ -111,11 +112,40 @@ router.put('/tasks/:id', authMiddleware, requireRole('ops'), async (req: Request
           run("UPDATE vehicles SET status='available' WHERE id=?", [task.vehicle_id])
         }
       }
+
+      const opsUser = queryOne('SELECT * FROM users WHERE id = ?', [req.user!.id])
+      const vehicleCode = vehicle?.code || task.vehicle_id
+      const taskTypeLabel = task.type === 'battery_swap' ? '换电' : task.type === 'repair' ? '维修' : '调度'
+      const photoInfo = photos ? '，已上传维修照片' : ''
+
+      const supervisors = queryAll("SELECT * FROM users WHERE role = 'supervisor'")
+      for (const sup of supervisors) {
+        if (vehicle && sup.area_id === vehicle.area_id) {
+          run(
+            'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [`ns${Date.now()}${sup.id}`, sup.id, 'system',
+              `${taskTypeLabel}任务完成`,
+              `车辆${vehicleCode}的${taskTypeLabel}任务已完成。处理人：${opsUser?.name || req.user!.id}，完成时间：${now}${photoInfo}。`,
+              req.params.id]
+          )
+        }
+      }
+
+      const allAdmins = queryAll("SELECT * FROM users WHERE role = 'admin'")
+      for (const admin of allAdmins) {
+        run(
+          'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [`na${Date.now()}${admin.id}`, admin.id, 'system',
+            `${taskTypeLabel}任务完成`,
+            `车辆${vehicleCode}的${taskTypeLabel}任务已完成。处理人：${opsUser?.name || req.user!.id}，完成时间：${now}${photoInfo}。`,
+            req.params.id]
+        )
+      }
     } else if (status === 'in_progress') {
       run('UPDATE ops_tasks SET status=? WHERE id=?', ['in_progress', req.params.id])
     }
 
-    res.json({ success: true, data: { taskId: req.params.id, status } })
+    res.json({ success: true, data: { taskId: req.params.id, status, completedAt: status === 'completed' ? now : null } })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })
   }

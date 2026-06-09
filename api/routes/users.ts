@@ -81,8 +81,15 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response): Promise<
 
 router.post('/faults/report', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { vehicleId, faultType, photos } = req.body
-    const vehicle = queryOne('SELECT * FROM vehicles WHERE id = ?', [vehicleId])
+    const { vehicleId, vehicleCode, faultType, photos, description } = req.body
+
+    let vehicle = null
+    if (vehicleId) {
+      vehicle = queryOne('SELECT * FROM vehicles WHERE id = ?', [vehicleId])
+    } else if (vehicleCode) {
+      vehicle = queryOne('SELECT * FROM vehicles WHERE code = ?', [vehicleCode])
+    }
+
     if (!vehicle) {
       res.status(404).json({ success: false, error: '车辆不存在' })
       return
@@ -95,32 +102,49 @@ router.post('/faults/report', authMiddleware, async (req: Request, res: Response
 
     if (opsUsers.length > 0) {
       const vehicleArea = vehicle.area_id
-      const matchedOps = opsUsers.find((u: any) => u.area_id === vehicleArea)
-      assignedTo = matchedOps ? matchedOps.id : opsUsers[0].id
+      const sameAreaOps = opsUsers.filter((u: any) => u.area_id === vehicleArea)
+      if (sameAreaOps.length > 0) {
+        assignedTo = sameAreaOps[0].id
+      } else {
+        let minDist = Infinity
+        for (const opsUser of opsUsers) {
+          const opsArea = queryOne('SELECT * FROM areas WHERE id = ?', [opsUser.area_id])
+          if (opsArea) {
+            const bounds = JSON.parse(opsArea.bounds)
+            const dist = Math.sqrt((vehicle.lat - bounds.center[0]) ** 2 + (vehicle.lng - bounds.center[1]) ** 2)
+            if (dist < minDist) {
+              minDist = dist
+              assignedTo = opsUser.id
+            }
+          }
+        }
+        if (!assignedTo) assignedTo = opsUsers[0].id
+      }
     }
 
     run(
       'INSERT INTO ops_tasks (id, type, vehicle_id, fault_type, fault_photos, status, assigned_to, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [taskId, 'repair', vehicleId, faultType, photos ? JSON.stringify(photos) : null, 'pending', assignedTo, 3, now]
+      [taskId, 'repair', vehicle.id, faultType, photos ? JSON.stringify(photos) : null, 'pending', assignedTo, 3, now]
     )
 
-    run("UPDATE vehicles SET status = 'fault' WHERE id = ?", [vehicleId])
+    run("UPDATE vehicles SET status = 'fault' WHERE id = ?", [vehicle.id])
 
     if (assignedTo) {
+      const assignedOps = queryOne('SELECT * FROM users WHERE id = ?', [assignedTo])
       run(
         'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
-        ['n' + Date.now(), assignedTo, 'dispatch', '新维修任务', `车辆 ${vehicle.code} 报告故障：${faultType}，请及时处理`, taskId]
+        ['n' + Date.now(), assignedTo, 'dispatch', '新维修任务', `车辆 ${vehicle.code} 报告故障：${faultType}，位于区域${vehicle.area_id || '未知'}，请及时处理`, taskId]
       )
     }
 
     run(
       'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
-      ['n' + Date.now() + 'u', req.user!.id, 'fault', '故障报告已提交', `您报告的车辆 ${vehicle.code} 故障已受理，我们将尽快处理`, vehicleId]
+      ['n' + Date.now() + 'u', req.user!.id, 'fault', '故障报告已提交', `您报告的车辆 ${vehicle.code} 故障（${faultType}）已受理，维修任务已分配给运维人员，我们将尽快处理`, taskId]
     )
 
     res.json({
       success: true,
-      data: { taskId, assignedTo, message: '故障已提交' },
+      data: { taskId, assignedTo, vehicleCode: vehicle.code, message: '故障已提交' },
     })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })
