@@ -221,9 +221,73 @@ router.get('/route', authMiddleware, requireRole('ops'), async (req: Request, re
   }
 })
 
+router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'admin'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const overtimeTasks = queryAll(
+      `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE ot.status != 'completed' AND (unixepoch() - unixepoch(ot.created_at)) > 7200`
+    )
+
+    for (const task of overtimeTasks) {
+      const taskTypeLabel = task.type === 'battery_swap' ? '换电' : task.type === 'repair' ? '维修' : '调度'
+      const vehicleCode = task.vehicle_code || task.vehicle_id
+      const elapsed = Math.round((Date.now() - new Date(task.created_at).getTime()) / 3600000)
+
+      if (task.vehicle_area_id) {
+        const supervisors = queryAll("SELECT * FROM users WHERE role = 'supervisor' AND area_id = ?", [task.vehicle_area_id])
+        for (const sup of supervisors) {
+          run(
+            'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [`os${Date.now()}${sup.id}`, sup.id, 'system',
+              '运维任务超时提醒',
+              `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
+              task.id]
+          )
+        }
+      }
+
+      const allAdmins = queryAll("SELECT * FROM users WHERE role = 'admin'")
+      for (const admin of allAdmins) {
+        run(
+          'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [`oa${Date.now()}${admin.id}`, admin.id, 'system',
+            '运维任务超时提醒',
+            `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
+            task.id]
+        )
+      }
+    }
+
+    res.json({
+      success: true,
+      data: { count: overtimeTasks.length },
+    })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 router.get('/tasks/all', authMiddleware, requireRole('supervisor', 'admin'), async (req: Request, res: Response): Promise<void> => {
   try {
-    const tasks = queryAll('SELECT * FROM ops_tasks ORDER BY priority DESC, created_at ASC')
+    const { area_id, type, overtime } = req.query
+
+    let sql = `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE 1=1`
+    const params: any[] = []
+
+    if (area_id) {
+      sql += ` AND v.area_id = ?`
+      params.push(area_id)
+    }
+    if (type) {
+      sql += ` AND ot.type = ?`
+      params.push(type)
+    }
+    if (overtime === 'true') {
+      sql += ` AND ot.status != 'completed' AND (unixepoch() - unixepoch(ot.created_at)) > 7200`
+    }
+
+    sql += ` ORDER BY ot.priority DESC, ot.created_at ASC`
+
+    const tasks = queryAll(sql, params)
     res.json({
       success: true,
       data: tasks.map(formatTask),
@@ -234,10 +298,13 @@ router.get('/tasks/all', authMiddleware, requireRole('supervisor', 'admin'), asy
 })
 
 function formatTask(t: any) {
+  const overtime = t.status !== 'completed' && (Date.now() - new Date(t.created_at).getTime()) > 7200000
   return {
     id: t.id,
     type: t.type,
     vehicleId: t.vehicle_id,
+    vehicleCode: t.vehicle_code || null,
+    vehicleAreaId: t.vehicle_area_id || null,
     faultType: t.fault_type,
     faultPhotos: t.fault_photos ? JSON.parse(t.fault_photos) : null,
     status: t.status,
@@ -246,6 +313,7 @@ function formatTask(t: any) {
     createdAt: t.created_at,
     completedAt: t.completed_at,
     repairPhotos: t.repair_photos ? JSON.parse(t.repair_photos) : null,
+    overtime,
   }
 }
 

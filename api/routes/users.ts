@@ -79,7 +79,7 @@ router.put('/:id', authMiddleware, async (req: Request, res: Response): Promise<
   }
 })
 
-router.post('/faults/report', authMiddleware, async (req: Request, res: Response): Promise<void> => {
+router.post('/report', authMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { vehicleId, vehicleCode, faultType, photos, description } = req.body
 

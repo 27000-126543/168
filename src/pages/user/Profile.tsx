@@ -17,6 +17,7 @@ export default function Profile() {
   const creditBarBg = creditScore >= 80 ? 'bg-green-100' : creditScore >= 60 ? 'bg-yellow-100' : 'bg-red-100'
 
   const menus = [
+    { icon: FileText, label: '账户明细', to: '/user/account' },
     { icon: Bike, label: '骑行记录', to: '/user/history' },
     { icon: AlertTriangle, label: '故障举报', to: '/user/report' },
     { icon: Bell, label: '消息中心', to: '/notifications' },
@@ -56,7 +57,7 @@ export default function Profile() {
             <p className="text-sm text-zinc-500">账户余额</p>
             <p className="number-font text-xl font-bold text-zinc-900">¥{(user?.balance ?? 50.00).toFixed(2)}</p>
           </div>
-          <button className="btn-primary text-sm py-1.5">充值</button>
+          <button onClick={() => navigate('/user/account')} className="btn-primary text-sm py-1.5">充值</button>
         </div>
       </div>
 

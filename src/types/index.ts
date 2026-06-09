@@ -64,6 +64,7 @@ export interface OpsTask {
   vehicleCode: string
   vehicleLat: number
   vehicleLng: number
+  vehicleAreaId: string
   battery?: number
   faultType?: string
   faultPhotos?: string[]
@@ -73,6 +74,7 @@ export interface OpsTask {
   createdAt: string
   completedAt?: string
   repairPhotos?: string[]
+  overtime: boolean
 }
 
 export interface OpsRoute {
@@ -154,13 +156,37 @@ export interface MonthlyReport {
     areaName: string
     rideCount: number
     revenue: number
+    dispatchRevenue: number
     opsCost: number
+    batterySwapCost: number
+    repairCost: number
+    arrearsAmount: number
     profit: number
   }[]
   totalRides: number
   totalRevenue: number
+  totalDispatchRevenue: number
   totalOpsCost: number
+  totalBatterySwapCost: number
+  totalRepairCost: number
+  totalArrearsAmount: number
   totalProfit: number
+}
+
+export interface AreaDetailReport {
+  areaId: string
+  areaName: string
+  reports: {
+    month: string
+    rideCount: number
+    revenue: number
+    dispatchRevenue: number
+    opsCost: number
+    batterySwapCost: number
+    repairCost: number
+    arrearsAmount: number
+    profit: number
+  }[]
 }
 
 export interface FaultReport {

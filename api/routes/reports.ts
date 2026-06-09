@@ -18,23 +18,59 @@ router.get('/monthly', authMiddleware, requireRole('admin', 'supervisor'), async
     const grouped: any = {}
     for (const r of reports) {
       if (!grouped[r.month]) {
-        grouped[r.month] = { month: r.month, areas: [], totalRides: 0, totalRevenue: 0, totalOpsCost: 0, totalProfit: 0 }
+        grouped[r.month] = { month: r.month, areas: [], totalRides: 0, totalRevenue: 0, totalDispatchRevenue: 0, totalOpsCost: 0, totalBatterySwapCost: 0, totalRepairCost: 0, totalArrearsAmount: 0, totalProfit: 0 }
       }
       grouped[r.month].areas.push({
         areaId: r.area_id,
         areaName: areaMap[r.area_id] || '',
         rideCount: r.ride_count,
         revenue: r.revenue,
+        dispatchRevenue: r.dispatch_revenue || 0,
         opsCost: r.ops_cost,
+        batterySwapCost: r.battery_swap_cost || 0,
+        repairCost: r.repair_cost || 0,
+        arrearsAmount: r.arrears_amount || 0,
         profit: r.profit,
       })
       grouped[r.month].totalRides += r.ride_count
       grouped[r.month].totalRevenue += r.revenue
+      grouped[r.month].totalDispatchRevenue += r.dispatch_revenue || 0
       grouped[r.month].totalOpsCost += r.ops_cost
+      grouped[r.month].totalBatterySwapCost += r.battery_swap_cost || 0
+      grouped[r.month].totalRepairCost += r.repair_cost || 0
+      grouped[r.month].totalArrearsAmount += r.arrears_amount || 0
       grouped[r.month].totalProfit += r.profit
     }
 
     res.json({ success: true, data: Object.values(grouped) })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+router.get('/area-detail', authMiddleware, requireRole('admin', 'supervisor'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const areaId = req.query.area_id as string
+    if (!areaId) {
+      res.status(400).json({ success: false, error: '请指定区域' })
+      return
+    }
+    const reports = queryAll('SELECT * FROM monthly_reports WHERE area_id = ? ORDER BY month DESC', [areaId])
+    const area = queryOne('SELECT * FROM areas WHERE id = ?', [areaId])
+
+    const data = reports.map(r => ({
+      month: r.month,
+      rideCount: r.ride_count,
+      revenue: r.revenue,
+      dispatchRevenue: r.dispatch_revenue || 0,
+      opsCost: r.ops_cost,
+      batterySwapCost: r.battery_swap_cost || 0,
+      repairCost: r.repair_cost || 0,
+      arrearsAmount: r.arrears_amount || 0,
+      profit: r.profit,
+    }))
+
+    res.json({ success: true, data: { areaId, areaName: area?.name || '', reports: data } })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })
   }
@@ -57,7 +93,11 @@ router.post('/generate', authMiddleware, requireRole('admin'), async (req: Reque
 
       let rideCount = 0
       let revenue = 0
+      let dispatchRevenue = 0
       let opsCost = 0
+      let batterySwapCost = 0
+      let repairCost = 0
+      let arrearsAmount = 0
 
       if (vehicleIds) {
         const rides = queryAll(
@@ -65,25 +105,42 @@ router.post('/generate', authMiddleware, requireRole('admin'), async (req: Reque
           [month]
         )
         rideCount = rides.length
-        revenue = rides.reduce((sum: number, r: any) => sum + r.fee + r.dispatch_fee, 0)
+        revenue = rides.reduce((sum: number, r: any) => sum + r.fee, 0)
+        dispatchRevenue = rides.reduce((sum: number, r: any) => sum + r.dispatch_fee, 0)
+
+        const areaUserIds = queryAll("SELECT id FROM users WHERE area_id = ?", [area.id]).map((u: any) => `'${u.id}'`).join(',')
+        if (areaUserIds) {
+          const arrearsTx = queryAll(
+            `SELECT * FROM transactions WHERE type IN ('ride_fee', 'dispatch_fee') AND status = 'arrears' AND user_id IN (${areaUserIds}) AND strftime('%Y-%m', created_at) = ?`,
+            [month]
+          )
+          arrearsAmount = Math.abs(arrearsTx.reduce((sum: number, t: any) => sum + t.amount, 0))
+        }
       }
 
-      const tasks = queryAll(
-        "SELECT * FROM ops_tasks WHERE status = 'completed' AND assigned_to IN (SELECT id FROM users WHERE area_id = ?) AND strftime('%Y-%m', completed_at) = ?",
+      const swapTasks = queryAll(
+        "SELECT * FROM ops_tasks WHERE type = 'battery_swap' AND status = 'completed' AND assigned_to IN (SELECT id FROM users WHERE area_id = ?) AND strftime('%Y-%m', completed_at) = ?",
         [area.id, month]
       )
-      opsCost = tasks.length * 150
+      batterySwapCost = swapTasks.length * 100
 
-      const profit = revenue - opsCost
+      const repairTasks = queryAll(
+        "SELECT * FROM ops_tasks WHERE type = 'repair' AND status = 'completed' AND assigned_to IN (SELECT id FROM users WHERE area_id = ?) AND strftime('%Y-%m', completed_at) = ?",
+        [area.id, month]
+      )
+      repairCost = repairTasks.length * 200
+
+      opsCost = batterySwapCost + repairCost
+      const profit = revenue + dispatchRevenue - opsCost
 
       const existing = queryOne('SELECT * FROM monthly_reports WHERE month = ? AND area_id = ?', [month, area.id])
       if (existing) {
-        run('UPDATE monthly_reports SET ride_count=?, revenue=?, ops_cost=?, profit=? WHERE id=?',
-          [rideCount, Math.round(revenue * 100) / 100, opsCost, Math.round(profit * 100) / 100, existing.id])
+        run('UPDATE monthly_reports SET ride_count=?, revenue=?, dispatch_revenue=?, ops_cost=?, battery_swap_cost=?, repair_cost=?, arrears_amount=?, profit=? WHERE id=?',
+          [rideCount, Math.round(revenue * 100) / 100, Math.round(dispatchRevenue * 100) / 100, opsCost, batterySwapCost, repairCost, Math.round(arrearsAmount * 100) / 100, Math.round(profit * 100) / 100, existing.id])
       } else {
         const id = 'mr' + Date.now() + area.id
-        run('INSERT INTO monthly_reports (id, month, area_id, ride_count, revenue, ops_cost, profit) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [id, month, area.id, rideCount, Math.round(revenue * 100) / 100, opsCost, Math.round(profit * 100) / 100])
+        run('INSERT INTO monthly_reports (id, month, area_id, ride_count, revenue, dispatch_revenue, ops_cost, battery_swap_cost, repair_cost, arrears_amount, profit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, month, area.id, rideCount, Math.round(revenue * 100) / 100, Math.round(dispatchRevenue * 100) / 100, opsCost, batterySwapCost, repairCost, Math.round(arrearsAmount * 100) / 100, Math.round(profit * 100) / 100])
       }
     }
 

@@ -88,6 +88,11 @@ router.post('/unlock', authMiddleware, async (req: Request, res: Response): Prom
 
     if (needDeposit && paidDeposit) {
       run('UPDATE users SET deposit = 199 WHERE id = ?', [userId])
+      const u = queryOne('SELECT * FROM users WHERE id = ?', [userId])
+      run(
+        'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ['tx_dep' + Date.now(), userId, 'deposit_pay', -199, u?.balance || 0, null, '缴纳押金199元', 'completed']
+      )
     }
 
     const orderId = 'r' + Date.now()
@@ -186,6 +191,27 @@ router.post('/:id/return', authMiddleware, async (req: Request, res: Response): 
 
     if (!balanceInsufficient) {
       run('UPDATE users SET balance = ? WHERE id = ?', [newBalance, req.user!.id])
+      run(
+        'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ['tx' + Date.now(), req.user!.id, 'ride_fee', -fee, newBalance, orderId, `骑行扣费`, 'completed']
+      )
+      if (dispatchFee > 0) {
+        run(
+          'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          ['txd' + Date.now(), req.user!.id, 'dispatch_fee', -dispatchFee, newBalance, orderId, '围栏外还车调度费', 'completed']
+        )
+      }
+    } else {
+      run(
+        'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ['tx' + Date.now(), req.user!.id, 'ride_fee', -fee, currentBalance, orderId, '骑行扣费（余额不足）', 'arrears']
+      )
+      if (dispatchFee > 0) {
+        run(
+          'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          ['txd' + Date.now(), req.user!.id, 'dispatch_fee', -dispatchFee, currentBalance, orderId, '围栏外还车调度费（余额不足）', 'arrears']
+        )
+      }
     }
 
     let newCreditScore = currentCredit

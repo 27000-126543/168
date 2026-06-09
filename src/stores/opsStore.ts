@@ -8,7 +8,7 @@ interface OpsState {
   currentRoute: OpsRoute | null
   loading: boolean
   fetchTasks: () => Promise<void>
-  fetchAllTasks: () => Promise<void>
+  fetchAllTasks: (filters?: { area_id?: string; type?: string; overtime?: boolean }) => Promise<void>
   completeTask: (taskId: string, repairPhotos?: string[]) => Promise<void>
   fetchRoute: () => Promise<void>
 }
@@ -29,10 +29,16 @@ export const useOpsStore = create<OpsState>((set) => ({
     }
   },
 
-  fetchAllTasks: async () => {
+  fetchAllTasks: async (filters) => {
     set({ loading: true })
     try {
-      const allTasks = await api.get<OpsTask[]>('/ops/tasks/all')
+      let url = '/ops/tasks/all'
+      const params: string[] = []
+      if (filters?.area_id) params.push(`area_id=${filters.area_id}`)
+      if (filters?.type) params.push(`type=${filters.type}`)
+      if (filters?.overtime) params.push('overtime=true')
+      if (params.length > 0) url += '?' + params.join('&')
+      const allTasks = await api.get<OpsTask[]>(url)
       set({ allTasks, loading: false })
     } catch {
       set({ loading: false })

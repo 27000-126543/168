@@ -1,16 +1,20 @@
 import { create } from 'zustand'
-import type { MonthlyReport } from '@/types'
+import type { MonthlyReport, AreaDetailReport } from '@/types'
 import { api } from '@/utils/api'
 
 interface ReportState {
   monthlyReports: MonthlyReport[]
+  areaDetail: AreaDetailReport | null
   loading: boolean
   fetchMonthly: (month?: string) => Promise<void>
   generateReport: (month: string) => Promise<void>
+  fetchAreaDetail: (areaId: string) => Promise<void>
+  clearAreaDetail: () => void
 }
 
 export const useReportStore = create<ReportState>((set) => ({
   monthlyReports: [],
+  areaDetail: null,
   loading: false,
 
   fetchMonthly: async (month) => {
@@ -34,4 +38,15 @@ export const useReportStore = create<ReportState>((set) => ({
       set({ loading: false })
     }
   },
+
+  fetchAreaDetail: async (areaId) => {
+    try {
+      const areaDetail = await api.get<AreaDetailReport>(`/reports/area-detail?area_id=${areaId}`)
+      set({ areaDetail })
+    } catch {
+      set({ areaDetail: null })
+    }
+  },
+
+  clearAreaDetail: () => set({ areaDetail: null }),
 }))

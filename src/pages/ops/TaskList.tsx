@@ -6,10 +6,10 @@ import BatteryBar from '@/components/BatteryBar'
 import type { OpsTask, OpsTaskType } from '@/types'
 
 const MOCK_TASKS: OpsTask[] = [
-  { id: '1', type: 'battery_swap', vehicleId: 'v1', vehicleCode: 'EB-0012', vehicleLat: 39.905, vehicleLng: 116.405, battery: 12, status: 'pending', assignedTo: 'ops1', priority: 3, createdAt: '2026-06-09 08:30' },
-  { id: '2', type: 'repair', vehicleId: 'v2', vehicleCode: 'EB-0034', vehicleLat: 39.908, vehicleLng: 116.412, faultType: '刹车故障', status: 'pending', assignedTo: 'ops1', priority: 2, createdAt: '2026-06-09 09:15' },
-  { id: '3', type: 'dispatch', vehicleId: 'v3', vehicleCode: 'EB-0056', vehicleLat: 39.902, vehicleLng: 116.398, status: 'in_progress', assignedTo: 'ops1', priority: 1, createdAt: '2026-06-09 07:00' },
-  { id: '4', type: 'battery_swap', vehicleId: 'v4', vehicleCode: 'EB-0078', vehicleLat: 39.911, vehicleLng: 116.420, battery: 8, status: 'pending', assignedTo: 'ops1', priority: 2, createdAt: '2026-06-09 10:00' },
+  { id: '1', type: 'battery_swap', vehicleId: 'v1', vehicleCode: 'EB-0012', vehicleLat: 39.905, vehicleLng: 116.405, vehicleAreaId: 'area1', battery: 12, status: 'pending', assignedTo: 'ops1', priority: 3, createdAt: '2026-06-09 08:30', overtime: false },
+  { id: '2', type: 'repair', vehicleId: 'v2', vehicleCode: 'EB-0034', vehicleLat: 39.908, vehicleLng: 116.412, vehicleAreaId: 'area2', faultType: '刹车故障', status: 'pending', assignedTo: 'ops1', priority: 2, createdAt: '2026-06-09 09:15', overtime: false },
+  { id: '3', type: 'dispatch', vehicleId: 'v3', vehicleCode: 'EB-0056', vehicleLat: 39.902, vehicleLng: 116.398, vehicleAreaId: 'area1', status: 'in_progress', assignedTo: 'ops1', priority: 1, createdAt: '2026-06-09 07:00', overtime: false },
+  { id: '4', type: 'battery_swap', vehicleId: 'v4', vehicleCode: 'EB-0078', vehicleLat: 39.911, vehicleLng: 116.420, vehicleAreaId: 'area3', battery: 8, status: 'pending', assignedTo: 'ops1', priority: 2, createdAt: '2026-06-09 10:00', overtime: false },
 ]
 
 const typeConfig: Record<OpsTaskType, { icon: typeof Battery; color: string; label: string }> = {

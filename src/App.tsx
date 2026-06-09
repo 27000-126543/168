@@ -8,6 +8,7 @@ import Riding from '@/pages/user/Riding'
 import History from '@/pages/user/History'
 import Report from '@/pages/user/Report'
 import Profile from '@/pages/user/Profile'
+import AccountDetail from '@/pages/user/AccountDetail'
 import TaskList from '@/pages/ops/TaskList'
 import RouteView from '@/pages/ops/RouteView'
 import ScanConfirm from '@/pages/ops/ScanConfirm'
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/user/history" element={<History />} />
           <Route path="/user/report" element={<Report />} />
           <Route path="/user/profile" element={<Profile />} />
+          <Route path="/user/account" element={<AccountDetail />} />
         </Route>
 
         <Route element={<ProtectedRoute allowedRoles={['ops']}><Layout role="ops" /></ProtectedRoute>}>

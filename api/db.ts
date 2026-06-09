@@ -144,13 +144,29 @@ function createTables() {
     related_id TEXT
   )`)
 
+  d.run(`CREATE TABLE transactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    type TEXT NOT NULL CHECK(type IN ('ride_fee', 'dispatch_fee', 'deposit_pay', 'deposit_refund', 'topup', 'arrears')),
+    amount REAL NOT NULL,
+    balance_after REAL NOT NULL,
+    related_id TEXT,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('completed', 'pending', 'arrears')),
+    created_at TEXT DEFAULT (datetime('now'))
+  )`)
+
   d.run(`CREATE TABLE monthly_reports (
     id TEXT PRIMARY KEY,
     month TEXT NOT NULL,
     area_id TEXT NOT NULL REFERENCES areas(id),
     ride_count INTEGER DEFAULT 0,
     revenue REAL DEFAULT 0,
+    dispatch_revenue REAL DEFAULT 0,
     ops_cost REAL DEFAULT 0,
+    battery_swap_cost REAL DEFAULT 0,
+    repair_cost REAL DEFAULT 0,
+    arrears_amount REAL DEFAULT 0,
     profit REAL DEFAULT 0
   )`)
 
@@ -164,6 +180,8 @@ function createTables() {
   d.run(`CREATE INDEX idx_notifications_user ON notifications(user_id)`)
   d.run(`CREATE INDEX idx_notifications_read ON notifications(read)`)
   d.run(`CREATE INDEX idx_monthly_reports_month ON monthly_reports(month)`)
+  d.run(`CREATE INDEX idx_transactions_user ON transactions(user_id)`)
+  d.run(`CREATE INDEX idx_transactions_type ON transactions(type)`)
 }
 
 function seedData() {
@@ -180,6 +198,7 @@ function seedData() {
   seedPricingRules(d, now)
   seedNotifications(d, now)
   seedMonthlyReports(d, now)
+  seedTransactions(d, now)
 }
 
 function seedAreas(d: Database) {
@@ -465,24 +484,52 @@ function seedNotifications(d: Database, now: string) {
 
 function seedMonthlyReports(d: Database, now: string) {
   const reports = [
-    { id: 'mr1', month: '2026-03', area_id: 'area1', ride_count: 1250, revenue: 8750.0, ops_cost: 2100.0, profit: 6650.0 },
-    { id: 'mr2', month: '2026-03', area_id: 'area2', ride_count: 980, revenue: 6860.0, ops_cost: 1800.0, profit: 5060.0 },
-    { id: 'mr3', month: '2026-03', area_id: 'area3', ride_count: 860, revenue: 6020.0, ops_cost: 1500.0, profit: 4520.0 },
-    { id: 'mr4', month: '2026-03', area_id: 'area4', ride_count: 720, revenue: 5040.0, ops_cost: 1200.0, profit: 3840.0 },
-    { id: 'mr5', month: '2026-03', area_id: 'area5', ride_count: 650, revenue: 4550.0, ops_cost: 1100.0, profit: 3450.0 },
-    { id: 'mr6', month: '2026-04', area_id: 'area1', ride_count: 1380, revenue: 9660.0, ops_cost: 2300.0, profit: 7360.0 },
-    { id: 'mr7', month: '2026-04', area_id: 'area2', ride_count: 1050, revenue: 7350.0, ops_cost: 1950.0, profit: 5400.0 },
-    { id: 'mr8', month: '2026-04', area_id: 'area3', ride_count: 920, revenue: 6440.0, ops_cost: 1600.0, profit: 4840.0 },
-    { id: 'mr9', month: '2026-04', area_id: 'area4', ride_count: 800, revenue: 5600.0, ops_cost: 1350.0, profit: 4250.0 },
-    { id: 'mr10', month: '2026-04', area_id: 'area5', ride_count: 710, revenue: 4970.0, ops_cost: 1200.0, profit: 3770.0 },
-    { id: 'mr11', month: '2026-05', area_id: 'area1', ride_count: 1520, revenue: 10640.0, ops_cost: 2500.0, profit: 8140.0 },
-    { id: 'mr12', month: '2026-05', area_id: 'area2', ride_count: 1180, revenue: 8260.0, ops_cost: 2100.0, profit: 6160.0 },
-    { id: 'mr13', month: '2026-05', area_id: 'area3', ride_count: 1010, revenue: 7070.0, ops_cost: 1750.0, profit: 5320.0 },
-    { id: 'mr14', month: '2026-05', area_id: 'area4', ride_count: 880, revenue: 6160.0, ops_cost: 1500.0, profit: 4660.0 },
-    { id: 'mr15', month: '2026-05', area_id: 'area5', ride_count: 780, revenue: 5460.0, ops_cost: 1350.0, profit: 4110.0 },
+    { id: 'mr1', month: '2026-03', area_id: 'area1', ride_count: 1250, revenue: 7500.0, dispatch_revenue: 1250.0, ops_cost: 2100.0, battery_swap_cost: 945.0, repair_cost: 630.0, arrears_amount: 120.0, profit: 6650.0 },
+    { id: 'mr2', month: '2026-03', area_id: 'area2', ride_count: 980, revenue: 5860.0, dispatch_revenue: 1000.0, ops_cost: 1800.0, battery_swap_cost: 810.0, repair_cost: 540.0, arrears_amount: 85.0, profit: 5060.0 },
+    { id: 'mr3', month: '2026-03', area_id: 'area3', ride_count: 860, revenue: 5120.0, dispatch_revenue: 900.0, ops_cost: 1500.0, battery_swap_cost: 675.0, repair_cost: 450.0, arrears_amount: 60.0, profit: 4520.0 },
+    { id: 'mr4', month: '2026-03', area_id: 'area4', ride_count: 720, revenue: 4290.0, dispatch_revenue: 750.0, ops_cost: 1200.0, battery_swap_cost: 540.0, repair_cost: 360.0, arrears_amount: 45.0, profit: 3840.0 },
+    { id: 'mr5', month: '2026-03', area_id: 'area5', ride_count: 650, revenue: 3875.0, dispatch_revenue: 675.0, ops_cost: 1100.0, battery_swap_cost: 495.0, repair_cost: 330.0, arrears_amount: 35.0, profit: 3450.0 },
+    { id: 'mr6', month: '2026-04', area_id: 'area1', ride_count: 1380, revenue: 8310.0, dispatch_revenue: 1350.0, ops_cost: 2300.0, battery_swap_cost: 1035.0, repair_cost: 690.0, arrears_amount: 105.0, profit: 7360.0 },
+    { id: 'mr7', month: '2026-04', area_id: 'area2', ride_count: 1050, revenue: 6300.0, dispatch_revenue: 1050.0, ops_cost: 1950.0, battery_swap_cost: 877.5, repair_cost: 585.0, arrears_amount: 75.0, profit: 5400.0 },
+    { id: 'mr8', month: '2026-04', area_id: 'area3', ride_count: 920, revenue: 5510.0, dispatch_revenue: 930.0, ops_cost: 1600.0, battery_swap_cost: 720.0, repair_cost: 480.0, arrears_amount: 55.0, profit: 4840.0 },
+    { id: 'mr9', month: '2026-04', area_id: 'area4', ride_count: 800, revenue: 4800.0, dispatch_revenue: 800.0, ops_cost: 1350.0, battery_swap_cost: 607.5, repair_cost: 405.0, arrears_amount: 40.0, profit: 4250.0 },
+    { id: 'mr10', month: '2026-04', area_id: 'area5', ride_count: 710, revenue: 4245.0, dispatch_revenue: 725.0, ops_cost: 1200.0, battery_swap_cost: 540.0, repair_cost: 360.0, arrears_amount: 30.0, profit: 3770.0 },
+    { id: 'mr11', month: '2026-05', area_id: 'area1', ride_count: 1520, revenue: 9190.0, dispatch_revenue: 1450.0, ops_cost: 2500.0, battery_swap_cost: 1125.0, repair_cost: 750.0, arrears_amount: 95.0, profit: 8140.0 },
+    { id: 'mr12', month: '2026-05', area_id: 'area2', ride_count: 1180, revenue: 7110.0, dispatch_revenue: 1150.0, ops_cost: 2100.0, battery_swap_cost: 945.0, repair_cost: 630.0, arrears_amount: 70.0, profit: 6160.0 },
+    { id: 'mr13', month: '2026-05', area_id: 'area3', ride_count: 1010, revenue: 6090.0, dispatch_revenue: 980.0, ops_cost: 1750.0, battery_swap_cost: 787.5, repair_cost: 525.0, arrears_amount: 50.0, profit: 5320.0 },
+    { id: 'mr14', month: '2026-05', area_id: 'area4', ride_count: 880, revenue: 5310.0, dispatch_revenue: 850.0, ops_cost: 1500.0, battery_swap_cost: 675.0, repair_cost: 450.0, arrears_amount: 38.0, profit: 4660.0 },
+    { id: 'mr15', month: '2026-05', area_id: 'area5', ride_count: 780, revenue: 4710.0, dispatch_revenue: 750.0, ops_cost: 1350.0, battery_swap_cost: 607.5, repair_cost: 405.0, arrears_amount: 28.0, profit: 4110.0 },
   ]
   for (const r of reports) {
-    d.run('INSERT INTO monthly_reports VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [r.id, r.month, r.area_id, r.ride_count, r.revenue, r.ops_cost, r.profit])
+    d.run('INSERT INTO monthly_reports VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [r.id, r.month, r.area_id, r.ride_count, r.revenue, r.dispatch_revenue, r.ops_cost, r.battery_swap_cost, r.repair_cost, r.arrears_amount, r.profit])
+  }
+}
+
+function seedTransactions(d: Database, now: string) {
+  const transactions = [
+    { id: 'tx1', user_id: 'u6', type: 'ride_fee', amount: -4.5, balance_after: 46.0, related_id: 'r1', description: '骑行扣费-BJ10001', status: 'completed' },
+    { id: 'tx2', user_id: 'u7', type: 'ride_fee', amount: -3.5, balance_after: 28.5, related_id: 'r2', description: '骑行扣费-BJ10006', status: 'completed' },
+    { id: 'tx3', user_id: 'u8', type: 'ride_fee', amount: -5.8, balance_after: 4.2, related_id: 'r3', description: '骑行扣费-BJ10011', status: 'completed' },
+    { id: 'tx4', user_id: 'u8', type: 'dispatch_fee', amount: -15.0, balance_after: -10.8, related_id: 'r3', description: '围栏外还车调度费-BJ10011', status: 'arrears' },
+    { id: 'tx5', user_id: 'u8', type: 'deposit_pay', amount: -199.0, balance_after: -10.8, related_id: null, description: '缴纳押金199元', status: 'completed' },
+    { id: 'tx6', user_id: 'u9', type: 'ride_fee', amount: -3.0, balance_after: 22.8, related_id: 'r4', description: '骑行扣费-BJ10016', status: 'completed' },
+    { id: 'tx7', user_id: 'u10', type: 'ride_fee', amount: -4.0, balance_after: 76.0, related_id: 'r5', description: '骑行扣费-BJ10021', status: 'completed' },
+    { id: 'tx8', user_id: 'u6', type: 'topup', amount: 50.0, balance_after: 96.0, related_id: null, description: '余额充值50元', status: 'completed' },
+  ]
+  const times = [
+    new Date(Date.now() - 6900000).toISOString(),
+    new Date(Date.now() - 5100000).toISOString(),
+    new Date(Date.now() - 3300000).toISOString(),
+    new Date(Date.now() - 3300000).toISOString(),
+    new Date(Date.now() - 86400000).toISOString(),
+    new Date(Date.now() - 1500000).toISOString(),
+    new Date(Date.now() - 600000).toISOString(),
+    new Date(Date.now() - 86400000).toISOString(),
+  ]
+  for (let i = 0; i < transactions.length; i++) {
+    const t = transactions[i]
+    d.run('INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [t.id, t.user_id, t.type, t.amount, t.balance_after, t.related_id, t.description, t.status, times[i]])
   }
 }

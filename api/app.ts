@@ -17,6 +17,7 @@ import pricingRoutes from './routes/pricing.js'
 import notificationRoutes from './routes/notifications.js'
 import reportRoutes from './routes/reports.js'
 import userRoutes from './routes/users.js'
+import transactionRoutes from './routes/transactions.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -48,6 +49,7 @@ app.use('/api/pricing', pricingRoutes)
 app.use('/api/notifications', notificationRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/users', userRoutes)
+app.use('/api/transactions', transactionRoutes)
 app.use('/api/faults', userRoutes)
 
 app.use(

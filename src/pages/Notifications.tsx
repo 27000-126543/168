@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Bike, MapPin, AlertTriangle, Truck, Bell, Download, CheckCheck, FileText } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Bike, MapPin, AlertTriangle, Truck, Bell, Download, CheckCheck, FileText, BarChart3 } from 'lucide-react'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { useAuthStore } from '@/stores/authStore'
 import type { Notification, NotificationType } from '@/types'
 
 const typeConfig: Record<NotificationType, { icon: typeof Bike; color: string; label: string }> = {
@@ -24,6 +26,8 @@ function downloadVoucher(notification: Notification) {
 
 export default function Notifications() {
   const { notifications, fetchNotifications, markAsRead, unreadCount } = useNotificationStore()
+  const { user } = useAuthStore()
+  const navigate = useNavigate()
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => { fetchNotifications() }, [fetchNotifications])
@@ -46,6 +50,7 @@ export default function Notifications() {
   }
 
   const hasVoucher = (n: Notification) => ['unlock', 'return', 'dispatch', 'fault'].includes(n.type) && n.relatedId
+  const isReportNotification = (n: Notification) => n.type === 'system' && n.title?.includes('运营报告') && n.relatedId
 
   return (
     <div className="h-screen flex bg-zinc-50">
@@ -118,6 +123,15 @@ export default function Notifications() {
             {hasVoucher(selected) && (
               <button onClick={() => downloadVoucher(selected)} className="btn-outline flex items-center gap-2">
                 <Download className="w-4 h-4" />下载凭证
+              </button>
+            )}
+            {isReportNotification(selected) && (
+              <button onClick={() => {
+                const role = user?.role
+                if (role === 'admin') navigate('/admin/reports')
+                else if (role === 'supervisor') navigate('/supervisor/dispatch')
+              }} className="btn-primary flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />查看报告
               </button>
             )}
           </div>
