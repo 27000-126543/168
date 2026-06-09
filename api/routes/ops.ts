@@ -16,7 +16,7 @@ function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
 router.get('/tasks', authMiddleware, requireRole('ops'), async (req: Request, res: Response): Promise<void> => {
   try {
     const tasks = queryAll(
-      'SELECT * FROM ops_tasks WHERE assigned_to = ? ORDER BY priority DESC, created_at ASC',
+      `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id, v.lat AS vehicle_lat, v.lng AS vehicle_lng FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE ot.assigned_to = ? ORDER BY ot.priority DESC, ot.created_at ASC`,
       [req.user!.id]
     )
     res.json({
@@ -112,6 +112,11 @@ router.put('/tasks/:id', authMiddleware, requireRole('ops'), async (req: Request
           run("UPDATE vehicles SET status='available' WHERE id=?", [task.vehicle_id])
         }
       }
+
+      run(
+        "UPDATE notifications SET title = REPLACE(title, '[超时]', '[已处理]'), content = content || '（该任务已完成）' WHERE type = 'system' AND related_id = ? AND title LIKE '[超时]%'",
+        [req.params.id]
+      )
 
       const opsUser = queryOne('SELECT * FROM users WHERE id = ?', [req.user!.id])
       const vehicleCode = vehicle?.code || task.vehicle_id
@@ -247,37 +252,43 @@ router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'a
       const elapsed = Math.round((Date.now() - new Date(task.created_at).getTime()) / 3600000)
 
       let alertLevel = '超时提醒'
-      if (elapsed > 8) alertLevel = '紧急超时'
-      else if (elapsed > 4) alertLevel = '严重超时'
+      let levelTag = '超时'
+      if (elapsed > 8) { alertLevel = '紧急超时'; levelTag = '紧急' }
+      else if (elapsed > 4) { alertLevel = '严重超时'; levelTag = '严重' }
 
-      const existingNotif = queryOne(
-        "SELECT id FROM notifications WHERE user_id = ? AND type = 'system' AND related_id = ?",
-        [task.assigned_to, task.id]
-      )
-      if (existingNotif) continue
+      const newTitle = `[超时][${levelTag}] 运维任务${alertLevel}`
+      const newContent = `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`
+
+      const recipients: { id: string; prefix: string }[] = []
 
       if (task.vehicle_area_id) {
         const supervisors = queryAll("SELECT * FROM users WHERE role = 'supervisor' AND area_id = ?", [task.vehicle_area_id])
         for (const sup of supervisors) {
-          run(
-            'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
-            [`os${Date.now()}${sup.id}`, sup.id, 'system',
-              `运维任务${alertLevel}`,
-              `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
-              task.id]
-          )
+          recipients.push({ id: sup.id, prefix: 'os' })
         }
       }
 
       const allAdmins = queryAll("SELECT * FROM users WHERE role = 'admin'")
       for (const admin of allAdmins) {
-        run(
-          'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
-          [`oa${Date.now()}${admin.id}`, admin.id, 'system',
-            `运维任务${alertLevel}`,
-            `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
-            task.id]
+        recipients.push({ id: admin.id, prefix: 'oa' })
+      }
+
+      for (const r of recipients) {
+        const existing = queryOne(
+          "SELECT id FROM notifications WHERE user_id = ? AND type = 'system' AND related_id = ? AND title LIKE '[超时]%'",
+          [r.id, task.id]
         )
+        if (existing) {
+          run(
+            "UPDATE notifications SET title = ?, content = ? WHERE id = ?",
+            [newTitle, newContent, existing.id]
+          )
+        } else {
+          run(
+            'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+            [`${r.prefix}${Date.now()}${r.id}`, r.id, 'system', newTitle, newContent, task.id]
+          )
+        }
       }
     }
 

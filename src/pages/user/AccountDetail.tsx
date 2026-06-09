@@ -25,6 +25,8 @@ interface TopupResult {
   newBalance: number
   settledArrears: number
   topupAmount: number
+  remainingArrears: number
+  deductionRecords: { arrearsTxId: string; deductAmount: number; remainingArrears: number }[]
 }
 
 const TYPE_CONFIG: Record<string, { icon: typeof Bike; label: string; color: string; bg: string }> = {
@@ -128,10 +130,24 @@ function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () 
   const isCompleted = tx.status === 'completed'
   const isArrears = tx.status === 'arrears'
 
-  const parseDeductAmount = () => {
-    const match = tx.description.match(/抵扣[欠费]?[：:]?\s*¥?([\d.]+)/)
-    return match ? match[1] : null
+  const parseDeductInfo = () => {
+    if (tx.type !== 'topup') return null
+    const result: { deductAmount?: number; remainingArrears?: number; creditedAmount?: number } = {}
+
+    const deductMatch = tx.description.match(/抵扣欠费[¥￥]?\s*([\d.]+)/)
+    if (deductMatch) result.deductAmount = parseFloat(deductMatch[1])
+
+    const remainingMatch = tx.description.match(/剩余欠费[¥￥]?\s*([\d.]+)/)
+    if (remainingMatch) result.remainingArrears = parseFloat(remainingMatch[1])
+
+    const creditMatch = tx.description.match(/到账余额[¥￥]?\s*([\d.]+)/)
+    if (creditMatch) result.creditedAmount = parseFloat(creditMatch[1])
+
+    return Object.keys(result).length > 0 ? result : null
   }
+
+  const deductInfo = parseDeductInfo()
+  const isAllDeducted = tx.type === 'topup' && tx.description.includes('可用余额未增加')
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center" onClick={onClose}>
@@ -202,19 +218,45 @@ function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () 
               <span className="text-sm text-zinc-900">围栏外还车调度费</span>
             </div>
           )}
-          {tx.type === 'topup' && tx.description.includes('抵扣') && (() => {
-            const deductAmount = parseDeductAmount()
-            return deductAmount ? (
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-zinc-500">抵扣欠费</span>
-                <span className="text-sm text-red-500">¥{deductAmount}</span>
-              </div>
-            ) : null
-          })()}
+          {deductInfo && (
+            <>
+              {deductInfo.deductAmount !== undefined && (
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-500">抵扣欠费</span>
+                  <span className="text-sm text-red-500">¥{deductInfo.deductAmount.toFixed(2)}</span>
+                </div>
+              )}
+              {deductInfo.remainingArrears !== undefined && (
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-500">剩余欠费</span>
+                  <span className={`text-sm ${deductInfo.remainingArrears > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                    ¥{deductInfo.remainingArrears.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              {deductInfo.creditedAmount !== undefined && (
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-500">到账余额</span>
+                  <span className="text-sm text-green-600">¥{deductInfo.creditedAmount.toFixed(2)}</span>
+                </div>
+              )}
+              {isAllDeducted && (
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-zinc-500">可用余额</span>
+                  <span className="text-sm text-zinc-400">未增加（全部抵扣欠费）</span>
+                </div>
+              )}
+            </>
+          )}
           {tx.type === 'deposit_pay' && (
             <div className="flex justify-between items-center">
               <span className="text-sm text-zinc-500">押金金额</span>
               <span className="text-sm text-zinc-900">¥199</span>
+            </div>
+          )}
+          {tx.type === 'arrears' && tx.description.includes('部分抵扣') && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2.5">
+              <p className="text-xs text-yellow-700">此笔为部分抵扣后的剩余欠费记录</p>
             </div>
           )}
         </div>

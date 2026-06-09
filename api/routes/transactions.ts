@@ -130,14 +130,36 @@ router.post('/topup', authMiddleware, requireRole('user'), async (req: Request, 
 
     let remainingSettlement = amount
     let settledArrears = 0
+    const now = new Date().toISOString()
+    const deductionRecords: { arrearsTxId: string; deductAmount: number; remainingArrears: number }[] = []
 
     for (const t of arrearsTransactions) {
+      if (remainingSettlement <= 0) break
+
       const arrearsAmount = Math.abs(t.amount)
-      if (remainingSettlement >= arrearsAmount) {
+      const currentOwed = Math.round((arrearsAmount - (t.deducted_amount || 0)) * 100) / 100
+
+      if (currentOwed <= 0) continue
+
+      if (remainingSettlement >= currentOwed) {
         run("UPDATE transactions SET status = 'completed' WHERE id = ?", [t.id])
-        remainingSettlement -= arrearsAmount
-        settledArrears += arrearsAmount
+        remainingSettlement -= currentOwed
+        settledArrears += currentOwed
+        deductionRecords.push({ arrearsTxId: t.id, deductAmount: currentOwed, remainingArrears: 0 })
       } else {
+        run("UPDATE transactions SET status = 'completed' WHERE id = ?", [t.id])
+
+        const newArrearsId = 'tx' + Date.now() + 'r'
+        const remainingArrearsAmount = Math.round((currentOwed - remainingSettlement) * 100) / 100
+        run(
+          'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [newArrearsId, userId, 'arrears', -remainingArrearsAmount, user.balance, t.related_id,
+            `${t.description}（部分抵扣后剩余欠费¥${remainingArrearsAmount.toFixed(2)}）`, 'arrears', now]
+        )
+
+        settledArrears += remainingSettlement
+        deductionRecords.push({ arrearsTxId: t.id, deductAmount: remainingSettlement, remainingArrears: remainingArrearsAmount })
+        remainingSettlement = 0
         break
       }
     }
@@ -148,10 +170,17 @@ router.post('/topup', authMiddleware, requireRole('user'), async (req: Request, 
     run('UPDATE users SET balance = ? WHERE id = ?', [newBalance, userId])
 
     const txId = 'tx' + Date.now()
-    const now = new Date().toISOString()
-    const description = settledArrears > 0
-      ? `余额充值${amount}元（含抵扣欠费${settledArrears}元）`
-      : `余额充值${amount}元`
+    const totalArrearsBefore = arrearsTransactions.reduce((s: number, t: any) => s + Math.abs(t.amount), 0)
+    const remainingArrearsTotal = Math.round((totalArrearsBefore - settledArrears) * 100) / 100
+    let description: string
+
+    if (settledArrears > 0 && remainingTopup > 0) {
+      description = `余额充值${amount}元，抵扣欠费¥${settledArrears.toFixed(2)}，剩余欠费¥${remainingArrearsTotal.toFixed(2)}，到账余额¥${remainingTopup.toFixed(2)}`
+    } else if (settledArrears > 0 && remainingTopup === 0) {
+      description = `余额充值${amount}元，全部抵扣欠费¥${settledArrears.toFixed(2)}，剩余欠费¥${remainingArrearsTotal.toFixed(2)}，可用余额未增加`
+    } else {
+      description = `余额充值${amount}元`
+    }
 
     run(
       'INSERT INTO transactions (id, user_id, type, amount, balance_after, related_id, description, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -164,6 +193,8 @@ router.post('/topup', authMiddleware, requireRole('user'), async (req: Request, 
         newBalance,
         settledArrears,
         topupAmount: amount,
+        remainingArrears: remainingArrearsTotal,
+        deductionRecords,
       },
     })
   } catch (err: any) {
