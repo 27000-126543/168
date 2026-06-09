@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/utils/api'
-import { Wallet, Plus, Bike, AlertTriangle, Shield, ArrowDownUp, ChevronRight, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Wallet, Plus, Bike, AlertTriangle, Shield, ArrowDownUp, ChevronRight, X, Download, Calendar } from 'lucide-react'
 
 interface Transaction {
   id: string
@@ -10,6 +9,7 @@ interface Transaction {
   amount: number
   balanceAfter: number
   relatedId: string | null
+  vehicleCode: string | null
   description: string
   status: string
   createdAt: string
@@ -35,6 +35,21 @@ const TYPE_CONFIG: Record<string, { icon: typeof Bike; label: string; color: str
   topup: { icon: Plus, label: '充值', color: 'text-green-500', bg: 'bg-green-50' },
   arrears: { icon: AlertTriangle, label: '欠费', color: 'text-red-500', bg: 'bg-red-50' },
 }
+
+const TYPE_OPTIONS = [
+  { label: '全部', value: '' },
+  { label: '骑行扣费', value: 'ride_fee' },
+  { label: '调度费', value: 'dispatch_fee' },
+  { label: '押金', value: 'deposit_pay' },
+  { label: '充值', value: 'topup' },
+  { label: '欠费', value: 'arrears' },
+]
+
+const STATUS_OPTIONS = [
+  { label: '全部', value: '' },
+  { label: '已完成', value: 'completed' },
+  { label: '欠费中', value: 'arrears' },
+]
 
 const PRESET_AMOUNTS = [20, 50, 100]
 
@@ -106,19 +121,129 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
   )
 }
 
+function TransactionDetailModal({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
+  const config = TYPE_CONFIG[tx.type] || { icon: Wallet, label: tx.type, color: 'text-zinc-500', bg: 'bg-zinc-50' }
+  const Icon = config.icon
+  const isPositive = tx.amount > 0
+  const isCompleted = tx.status === 'completed'
+  const isArrears = tx.status === 'arrears'
+
+  const parseDeductAmount = () => {
+    const match = tx.description.match(/抵扣[欠费]?[：:]?\s*¥?([\d.]+)/)
+    return match ? match[1] : null
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end justify-center" onClick={onClose}>
+      <div className="bg-white rounded-t-2xl w-full max-w-lg p-6 animate-slide-up" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-bold text-lg text-zinc-900">交易详情</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-zinc-400" /></button>
+        </div>
+
+        <div className="flex items-center gap-3 mb-5">
+          <div className={`w-12 h-12 ${config.bg} rounded-xl flex items-center justify-center`}>
+            <Icon className={`w-6 h-6 ${config.color}`} />
+          </div>
+          <div>
+            <p className="font-medium text-zinc-900">{config.label}</p>
+            <p className="text-sm text-zinc-400 mt-0.5">{tx.description || config.label}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3 mb-5">
+          <div className="flex justify-between items-center">
+            <span className="text-sm text-zinc-500">金额</span>
+            <span className={`number-font text-lg font-bold ${isPositive ? 'text-green-600' : 'text-red-500'}`}>
+              {isPositive ? '+' : ''}¥{tx.amount.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-sm text-zinc-500">交易后余额</span>
+            <span className="number-font text-sm text-zinc-900">¥{tx.balanceAfter.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-sm text-zinc-500">状态</span>
+            {isCompleted && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-600">已完成</span>
+            )}
+            {isArrears && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">欠费中</span>
+            )}
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-sm text-zinc-500">时间</span>
+            <span className="text-sm text-zinc-900">{new Date(tx.createdAt).toLocaleString('zh-CN')}</span>
+          </div>
+        </div>
+
+        <div className="border-t border-zinc-100 pt-3 space-y-2">
+          {tx.relatedId && (
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-zinc-500">关联订单</span>
+              <span className="text-sm text-zinc-900">{tx.relatedId}</span>
+            </div>
+          )}
+          {tx.vehicleCode && (
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-zinc-500">车辆编号</span>
+              <span className="text-sm text-zinc-900">{tx.vehicleCode}</span>
+            </div>
+          )}
+          {tx.type === 'ride_fee' && tx.relatedId && (
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-zinc-500">费用组成</span>
+              <span className="text-sm text-zinc-900">骑行费</span>
+            </div>
+          )}
+          {tx.type === 'dispatch_fee' && (
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-zinc-500">费用组成</span>
+              <span className="text-sm text-zinc-900">围栏外还车调度费</span>
+            </div>
+          )}
+          {tx.type === 'topup' && tx.description.includes('抵扣') && (() => {
+            const deductAmount = parseDeductAmount()
+            return deductAmount ? (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-zinc-500">抵扣欠费</span>
+                <span className="text-sm text-red-500">¥{deductAmount}</span>
+              </div>
+            ) : null
+          })()}
+          {tx.type === 'deposit_pay' && (
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-zinc-500">押金金额</span>
+              <span className="text-sm text-zinc-900">¥199</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AccountDetail() {
   const { user, fetchMe } = useAuthStore()
-  const navigate = useNavigate()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [arrears, setArrears] = useState<ArrearsInfo | null>(null)
   const [showTopup, setShowTopup] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [filterType, setFilterType] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterMonth, setFilterMonth] = useState('')
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
     try {
+      const params = new URLSearchParams()
+      if (filterType) params.set('type', filterType)
+      if (filterStatus) params.set('status', filterStatus)
+      if (filterMonth) params.set('month', filterMonth)
+      const qs = params.toString()
       const [txRes, arRes] = await Promise.all([
-        api.get<Transaction[]>('/transactions'),
+        api.get<Transaction[]>(`/transactions${qs ? `?${qs}` : ''}`),
         api.get<ArrearsInfo>('/transactions/arrears'),
       ])
       setTransactions(txRes)
@@ -130,16 +255,40 @@ export default function AccountDetail() {
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [filterType, filterStatus, filterMonth])
 
   const handleTopupSuccess = async () => {
     await Promise.all([fetchMe(), fetchData()])
   }
 
-  const handleTransactionClick = (tx: Transaction) => {
-    if (tx.relatedId) {
-      navigate('/user/history')
-    }
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (filterType) params.set('type', filterType)
+      if (filterStatus) params.set('status', filterStatus)
+      if (filterMonth) params.set('month', filterMonth)
+      const qs = params.toString()
+      const data = await api.get<Transaction[]>(`/transactions/export${qs ? `?${qs}` : ''}`)
+      const lines = [
+        '=== 对账单 ===',
+        '',
+        ...data.map((tx) => {
+          const config = TYPE_CONFIG[tx.type] || { label: tx.type }
+          const sign = tx.amount > 0 ? '+' : ''
+          return `[${new Date(tx.createdAt).toLocaleString('zh-CN')}] ${config.label} | ${tx.description || config.label} | ${sign}¥${tx.amount.toFixed(2)} | 余额¥${tx.balanceAfter.toFixed(2)} | ${tx.status === 'completed' ? '已完成' : '欠费中'}${tx.relatedId ? ` | 订单:${tx.relatedId}` : ''}${tx.vehicleCode ? ` | 车辆:${tx.vehicleCode}` : ''}`
+        }),
+        '',
+        `共计 ${data.length} 笔交易`,
+        `生成时间: ${new Date().toLocaleString('zh-CN')}`,
+      ]
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `对账单_${filterMonth || '全部'}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {}
   }
 
   const balance = user?.balance ?? 0
@@ -156,9 +305,14 @@ export default function AccountDetail() {
             <p className="text-sm text-zinc-500">当前余额</p>
             <p className="number-font text-2xl font-bold text-zinc-900">¥{balance.toFixed(2)}</p>
           </div>
-          <button onClick={() => setShowTopup(true)} className="btn-primary text-sm py-1.5 flex items-center gap-1">
-            <Plus className="w-4 h-4" />充值
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleExport} className="btn-outline text-sm py-1.5 flex items-center gap-1">
+              <Download className="w-4 h-4" />导出对账单
+            </button>
+            <button onClick={() => setShowTopup(true)} className="btn-primary text-sm py-1.5 flex items-center gap-1">
+              <Plus className="w-4 h-4" />充值
+            </button>
+          </div>
         </div>
         {hasArrears && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
@@ -170,6 +324,61 @@ export default function AccountDetail() {
             <button onClick={() => setShowTopup(true)} className="text-sm font-medium text-red-600 hover:text-red-700">去还款</button>
           </div>
         )}
+      </div>
+
+      <div className="card mb-4 space-y-3">
+        <div className="flex items-center gap-2 bg-zinc-50 rounded-lg px-3 py-2">
+          <Calendar className="w-4 h-4 text-zinc-400 shrink-0" />
+          <input
+            type="month"
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+            className="bg-transparent text-sm outline-none flex-1"
+          />
+          {filterMonth && (
+            <button onClick={() => setFilterMonth('')} className="text-zinc-400 hover:text-zinc-600">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs text-zinc-400 mb-1.5">类型</p>
+          <div className="flex flex-wrap gap-1.5">
+            {TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFilterType(opt.value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                  filterType === opt.value
+                    ? 'bg-brand-700 text-white'
+                    : 'bg-zinc-100 text-zinc-600'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs text-zinc-400 mb-1.5">状态</p>
+          <div className="flex flex-wrap gap-1.5">
+            {STATUS_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFilterStatus(opt.value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                  filterStatus === opt.value
+                    ? 'bg-brand-700 text-white'
+                    : 'bg-zinc-100 text-zinc-600'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <h2 className="text-sm font-medium text-zinc-500 mb-3 flex items-center gap-1.5">
@@ -193,13 +402,12 @@ export default function AccountDetail() {
             const isPositive = tx.amount > 0
             const isCompleted = tx.status === 'completed'
             const isArrears = tx.status === 'arrears'
-            const clickable = !!tx.relatedId
 
             return (
               <div
                 key={tx.id}
-                onClick={() => handleTransactionClick(tx)}
-                className={`card flex items-center gap-3 ${clickable ? 'cursor-pointer hover:bg-zinc-50 active:bg-zinc-100' : ''}`}
+                onClick={() => setSelectedTx(tx)}
+                className="card flex items-center gap-3 cursor-pointer hover:bg-zinc-50 active:bg-zinc-100"
               >
                 <div className={`w-10 h-10 ${config.bg} rounded-xl flex items-center justify-center shrink-0`}>
                   <Icon className={`w-5 h-5 ${config.color}`} />
@@ -222,7 +430,7 @@ export default function AccountDetail() {
                   </p>
                   <p className="text-xs text-zinc-400 mt-0.5 number-font">余额 ¥{tx.balanceAfter.toFixed(2)}</p>
                 </div>
-                {clickable && <ChevronRight className="w-4 h-4 text-zinc-300 shrink-0" />}
+                <ChevronRight className="w-4 h-4 text-zinc-300 shrink-0" />
               </div>
             )
           })}
@@ -230,6 +438,7 @@ export default function AccountDetail() {
       )}
 
       {showTopup && <TopupModal onClose={() => setShowTopup(false)} onSuccess={handleTopupSuccess} />}
+      {selectedTx && <TransactionDetailModal tx={selectedTx} onClose={() => setSelectedTx(null)} />}
     </div>
   )
 }

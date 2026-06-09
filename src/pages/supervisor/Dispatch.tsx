@@ -1,8 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ArrowUp, ArrowDown, Truck, Battery, Wrench, X, Download, AlertTriangle, Clock, CheckCircle } from 'lucide-react'
+import { ArrowUp, ArrowDown, Truck, Battery, Wrench, X, Download, AlertTriangle, Clock, CheckCircle, Image } from 'lucide-react'
 import { useOpsStore } from '@/stores/opsStore'
 import { api } from '@/utils/api'
 import type { OpsTask } from '@/types'
+
+interface SlaStats {
+  areas: Array<{
+    areaId: string
+    areaName: string
+    avgProcessingTime: { battery_swap: number; repair: number; dispatch: number }
+    overtimeCount: number
+    pendingCount: number
+    inProgressCount: number
+  }>
+  totalOvertime: number
+  totalPending: number
+}
 
 const AREA_MAP: Record<string, string> = {
   area1: '朝阳区',
@@ -53,9 +66,11 @@ export default function Dispatch() {
   const [checkingOvertime, setCheckingOvertime] = useState(false)
   const [detailTask, setDetailTask] = useState<OpsTask | null>(null)
   const [adjustingId, setAdjustingId] = useState<string | null>(null)
+  const [slaStats, setSlaStats] = useState<SlaStats | null>(null)
 
   useEffect(() => {
     fetchAllTasks()
+    api.get<SlaStats>('/ops/sla-stats').then(setSlaStats).catch(() => {})
   }, [fetchAllTasks])
 
   const areas = useCallback(() => {
@@ -142,6 +157,69 @@ export default function Dispatch() {
         </div>
       )}
 
+      {slaStats && (
+        <div className="mb-6 space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className={`rounded-xl border p-4 ${slaStats.totalOvertime > 0 ? 'bg-red-900/30 border-red-800/50' : 'bg-zinc-800 border-zinc-700'}`}>
+              <p className="text-xs text-zinc-400">总超时任务</p>
+              <p className={`text-2xl font-bold mt-1 ${slaStats.totalOvertime > 0 ? 'text-red-400' : 'text-white'}`}>{slaStats.totalOvertime}</p>
+            </div>
+            <div className="rounded-xl border p-4 bg-yellow-900/20 border-yellow-800/40">
+              <p className="text-xs text-zinc-400">总待处理</p>
+              <p className="text-2xl font-bold mt-1 text-yellow-400">{slaStats.totalPending}</p>
+            </div>
+            <div className="rounded-xl border p-4 bg-green-900/20 border-green-800/40">
+              <p className="text-xs text-zinc-400">平均处理时长</p>
+              <p className="text-2xl font-bold mt-1 text-green-400">
+                {slaStats.areas.length > 0
+                  ? Math.round(
+                      slaStats.areas.reduce((sum, a) => sum + a.avgProcessingTime.battery_swap + a.avgProcessingTime.repair + a.avgProcessingTime.dispatch, 0) /
+                      (slaStats.areas.length * 3)
+                    )
+                  : 0}
+                <span className="text-sm font-normal ml-1">分钟</span>
+              </p>
+            </div>
+          </div>
+          <div className="bg-zinc-800 rounded-xl border border-zinc-700 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-zinc-400 text-xs border-b border-zinc-700">
+                  <th className="text-left px-5 py-3">区域</th>
+                  <th className="text-left px-5 py-3">平均换电时长</th>
+                  <th className="text-left px-5 py-3">平均维修时长</th>
+                  <th className="text-left px-5 py-3">平均调度时长</th>
+                  <th className="text-center px-5 py-3">超时数</th>
+                  <th className="text-center px-5 py-3">待处理</th>
+                  <th className="text-center px-5 py-3">进行中</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slaStats.areas.map((area) => (
+                  <tr key={area.areaId} className="border-b border-zinc-700/50">
+                    <td className="px-5 py-3 text-zinc-200">{area.areaName}</td>
+                    <td className="px-5 py-3 text-zinc-300">{area.avgProcessingTime.battery_swap}分钟</td>
+                    <td className="px-5 py-3 text-zinc-300">{area.avgProcessingTime.repair}分钟</td>
+                    <td className="px-5 py-3 text-zinc-300">{area.avgProcessingTime.dispatch}分钟</td>
+                    <td className="px-5 py-3 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${area.overtimeCount > 0 ? 'bg-red-900/60 text-red-300' : 'text-zinc-400'}`}>
+                        {area.overtimeCount}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${area.pendingCount > 3 ? 'bg-yellow-900/60 text-yellow-300' : 'text-zinc-400'}`}>
+                        {area.pendingCount}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-center text-zinc-400">{area.inProgressCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3 mb-6">
         <div className="flex gap-2 flex-wrap">
           {areas.map((area) => {
@@ -190,6 +268,8 @@ export default function Dispatch() {
                 <th className="text-left px-5 py-3">区域</th>
                 <th className="text-left px-5 py-3">任务类型</th>
                 <th className="text-left px-5 py-3">车辆编号</th>
+                <th className="text-left px-5 py-3">故障类型</th>
+                <th className="text-left px-5 py-3">故障照片</th>
                 <th className="text-left px-5 py-3">创建时间</th>
                 <th className="text-center px-5 py-3">优先级</th>
                 <th className="text-center px-5 py-3">状态</th>
@@ -217,6 +297,19 @@ export default function Dispatch() {
                       </div>
                     </td>
                     <td className="px-5 py-3 text-zinc-300">{task.vehicleCode}</td>
+                    <td className="px-5 py-3 text-zinc-400">
+                      {task.type === 'repair' && task.faultType ? task.faultType : <span className="text-zinc-600">—</span>}
+                    </td>
+                    <td className="px-5 py-3">
+                      {task.type === 'repair' && task.faultPhotos && task.faultPhotos.length > 0 ? (
+                        <div className="flex items-center gap-1 text-zinc-300">
+                          <Image className="w-3.5 h-3.5 text-zinc-400" />
+                          <span>{task.faultPhotos.length}</span>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600">—</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-zinc-400 text-xs">{formatTime(task.createdAt)}</td>
                     <td className="px-5 py-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${priority.className}`}>
@@ -262,7 +355,7 @@ export default function Dispatch() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center py-8 text-zinc-500">暂无任务</td>
+                  <td colSpan={10} className="text-center py-8 text-zinc-500">暂无任务</td>
                 </tr>
               )}
             </tbody>
@@ -332,6 +425,27 @@ export default function Dispatch() {
                 <div className="flex items-center gap-2 px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg">
                   <AlertTriangle className="w-4 h-4 text-red-400" />
                   <span className="text-red-300 text-xs">此任务已超时</span>
+                </div>
+              )}
+
+              {detailTask.faultType && (
+                <div>
+                  <span className="text-zinc-500 text-xs">故障类型</span>
+                  <p className="text-zinc-200 mt-0.5">{detailTask.faultType}</p>
+                </div>
+              )}
+
+              {detailTask.faultPhotos && detailTask.faultPhotos.length > 0 && (
+                <div>
+                  <span className="text-zinc-500 text-xs">故障照片</span>
+                  <ul className="mt-1 space-y-1">
+                    {detailTask.faultPhotos.map((photo, i) => (
+                      <li key={i} className="text-zinc-300 text-xs flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
+                        {photo}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
 

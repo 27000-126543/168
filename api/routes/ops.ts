@@ -141,6 +141,20 @@ router.put('/tasks/:id', authMiddleware, requireRole('ops'), async (req: Request
             req.params.id]
         )
       }
+
+      const faultNotif = queryOne(
+        "SELECT user_id FROM notifications WHERE type = 'fault' AND related_id = ?",
+        [req.params.id]
+      )
+      if (faultNotif) {
+        run(
+          'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [`nf${Date.now()}${faultNotif.user_id}`, faultNotif.user_id, 'system',
+            `${taskTypeLabel}任务完成`,
+            `车辆${vehicleCode}的${taskTypeLabel}任务已完成，感谢您的举报`,
+            req.params.id]
+        )
+      }
     } else if (status === 'in_progress') {
       run('UPDATE ops_tasks SET status=? WHERE id=?', ['in_progress', req.params.id])
     }
@@ -224,7 +238,7 @@ router.get('/route', authMiddleware, requireRole('ops'), async (req: Request, re
 router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'admin'), async (req: Request, res: Response): Promise<void> => {
   try {
     const overtimeTasks = queryAll(
-      `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE ot.status != 'completed' AND (unixepoch() - unixepoch(ot.created_at)) > 7200`
+      `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id, v.lat AS vehicle_lat, v.lng AS vehicle_lng FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE ot.status != 'completed' AND (unixepoch() - unixepoch(ot.created_at)) > 7200`
     )
 
     for (const task of overtimeTasks) {
@@ -232,13 +246,23 @@ router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'a
       const vehicleCode = task.vehicle_code || task.vehicle_id
       const elapsed = Math.round((Date.now() - new Date(task.created_at).getTime()) / 3600000)
 
+      let alertLevel = '超时提醒'
+      if (elapsed > 8) alertLevel = '紧急超时'
+      else if (elapsed > 4) alertLevel = '严重超时'
+
+      const existingNotif = queryOne(
+        "SELECT id FROM notifications WHERE user_id = ? AND type = 'system' AND related_id = ?",
+        [task.assigned_to, task.id]
+      )
+      if (existingNotif) continue
+
       if (task.vehicle_area_id) {
         const supervisors = queryAll("SELECT * FROM users WHERE role = 'supervisor' AND area_id = ?", [task.vehicle_area_id])
         for (const sup of supervisors) {
           run(
             'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
             [`os${Date.now()}${sup.id}`, sup.id, 'system',
-              '运维任务超时提醒',
+              `运维任务${alertLevel}`,
               `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
               task.id]
           )
@@ -250,7 +274,7 @@ router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'a
         run(
           'INSERT INTO notifications (id, user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?, ?)',
           [`oa${Date.now()}${admin.id}`, admin.id, 'system',
-            '运维任务超时提醒',
+            `运维任务${alertLevel}`,
             `车辆${vehicleCode}的${taskTypeLabel}任务已超时${elapsed}小时未完成，请关注处理。`,
             task.id]
         )
@@ -266,11 +290,63 @@ router.get('/tasks/overtime-check', authMiddleware, requireRole('supervisor', 'a
   }
 })
 
+router.get('/sla-stats', authMiddleware, requireRole('supervisor', 'admin'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const areas = queryAll('SELECT * FROM areas')
+    const allTasks = queryAll(
+      `SELECT ot.*, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id`
+    )
+
+    const areasData = areas.map((area: any) => {
+      const areaTasks = allTasks.filter((t: any) => t.vehicle_area_id === area.id)
+
+      const completed = areaTasks.filter((t: any) => t.status === 'completed' && t.completed_at && t.created_at)
+      const calcAvg = (type: string) => {
+        const typed = completed.filter((t: any) => t.type === type)
+        if (typed.length === 0) return 0
+        const total = typed.reduce((sum: number, t: any) => {
+          return sum + (new Date(t.completed_at).getTime() - new Date(t.created_at).getTime()) / 3600000
+        }, 0)
+        return Math.round((total / typed.length) * 100) / 100
+      }
+
+      const overtimeCount = areaTasks.filter((t: any) =>
+        t.status !== 'completed' && (Date.now() - new Date(t.created_at).getTime()) > 7200000
+      ).length
+      const pendingCount = areaTasks.filter((t: any) => t.status === 'pending').length
+      const inProgressCount = areaTasks.filter((t: any) => t.status === 'in_progress').length
+
+      return {
+        areaId: area.id,
+        areaName: area.name,
+        avgProcessingTime: {
+          battery_swap: calcAvg('battery_swap'),
+          repair: calcAvg('repair'),
+          dispatch: calcAvg('dispatch'),
+        },
+        overtimeCount,
+        pendingCount,
+        inProgressCount,
+      }
+    })
+
+    const totalOvertime = areasData.reduce((s: number, a: any) => s + a.overtimeCount, 0)
+    const totalPending = areasData.reduce((s: number, a: any) => s + a.pendingCount, 0)
+
+    res.json({
+      success: true,
+      data: { areas: areasData, totalOvertime, totalPending },
+    })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 router.get('/tasks/all', authMiddleware, requireRole('supervisor', 'admin'), async (req: Request, res: Response): Promise<void> => {
   try {
     const { area_id, type, overtime } = req.query
 
-    let sql = `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE 1=1`
+    let sql = `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id, v.lat AS vehicle_lat, v.lng AS vehicle_lng FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE 1=1`
     const params: any[] = []
 
     if (area_id) {
@@ -305,6 +381,8 @@ function formatTask(t: any) {
     vehicleId: t.vehicle_id,
     vehicleCode: t.vehicle_code || null,
     vehicleAreaId: t.vehicle_area_id || null,
+    vehicleLat: t.vehicle_lat ?? null,
+    vehicleLng: t.vehicle_lng ?? null,
     faultType: t.fault_type,
     faultPhotos: t.fault_photos ? JSON.parse(t.fault_photos) : null,
     status: t.status,

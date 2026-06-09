@@ -4,6 +4,18 @@ import { authMiddleware, requireRole } from '../middleware/auth.js'
 
 const router = Router()
 
+function getVehicleCode(relatedId: string | null): string | null {
+  if (!relatedId) return null
+  if (relatedId.startsWith('r')) {
+    const rideOrder = queryOne('SELECT vehicle_id FROM ride_orders WHERE id = ?', [relatedId])
+    if (rideOrder) {
+      const vehicle = queryOne('SELECT code FROM vehicles WHERE id = ?', [rideOrder.vehicle_id])
+      if (vehicle) return vehicle.code
+    }
+  }
+  return null
+}
+
 function formatTransaction(t: any) {
   return {
     id: t.id,
@@ -14,6 +26,7 @@ function formatTransaction(t: any) {
     description: t.description,
     status: t.status,
     createdAt: t.created_at,
+    vehicleCode: getVehicleCode(t.related_id),
   }
 }
 
@@ -21,19 +34,74 @@ router.get('/', authMiddleware, async (req: Request, res: Response): Promise<voi
   try {
     const userId = req.user!.id
     const type = req.query.type as string | undefined
-    let transactions: any[]
+    const status = req.query.status as string | undefined
+    const month = req.query.month as string | undefined
+
+    let sql = 'SELECT * FROM transactions WHERE user_id = ?'
+    const params: any[] = [userId]
+
     if (type) {
-      transactions = queryAll(
-        'SELECT * FROM transactions WHERE user_id = ? AND type = ? ORDER BY created_at DESC',
-        [userId, type]
-      )
-    } else {
-      transactions = queryAll(
-        'SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC',
-        [userId]
-      )
+      sql += ' AND type = ?'
+      params.push(type)
     }
+    if (status) {
+      sql += ' AND status = ?'
+      params.push(status)
+    }
+    if (month) {
+      sql += " AND strftime('%Y-%m', created_at) = ?"
+      params.push(month)
+    }
+
+    sql += ' ORDER BY created_at DESC'
+    const transactions = queryAll(sql, params)
     res.json({ success: true, data: transactions.map(formatTransaction) })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+router.get('/export', authMiddleware, requireRole('user'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id
+    const type = req.query.type as string | undefined
+    const status = req.query.status as string | undefined
+    const month = req.query.month as string | undefined
+
+    let sql = 'SELECT t.*, ro.fee AS order_fee, ro.dispatch_fee FROM transactions t LEFT JOIN ride_orders ro ON t.related_id = ro.id WHERE t.user_id = ?'
+    const params: any[] = [userId]
+
+    if (type) {
+      sql += ' AND t.type = ?'
+      params.push(type)
+    }
+    if (status) {
+      sql += ' AND t.status = ?'
+      params.push(status)
+    }
+    if (month) {
+      sql += " AND strftime('%Y-%m', t.created_at) = ?"
+      params.push(month)
+    }
+
+    sql += ' ORDER BY t.created_at DESC'
+    const transactions = queryAll(sql, params)
+
+    const data = transactions.map(t => ({
+      id: t.id,
+      type: t.type,
+      amount: t.amount,
+      balanceAfter: t.balance_after,
+      relatedId: t.related_id,
+      description: t.description,
+      status: t.status,
+      createdAt: t.created_at,
+      vehicleCode: getVehicleCode(t.related_id),
+      orderFee: t.order_fee ?? null,
+      dispatchFee: t.dispatch_fee ?? null,
+    }))
+
+    res.json({ success: true, data })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })
   }

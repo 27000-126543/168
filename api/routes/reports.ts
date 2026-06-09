@@ -108,11 +108,11 @@ router.post('/generate', authMiddleware, requireRole('admin'), async (req: Reque
         revenue = rides.reduce((sum: number, r: any) => sum + r.fee, 0)
         dispatchRevenue = rides.reduce((sum: number, r: any) => sum + r.dispatch_fee, 0)
 
-        const areaUserIds = queryAll("SELECT id FROM users WHERE area_id = ?", [area.id]).map((u: any) => `'${u.id}'`).join(',')
-        if (areaUserIds) {
+        const areaRideIds = rides.map((r: any) => `'${r.id}'`).join(',')
+        if (areaRideIds) {
           const arrearsTx = queryAll(
-            `SELECT * FROM transactions WHERE type IN ('ride_fee', 'dispatch_fee') AND status = 'arrears' AND user_id IN (${areaUserIds}) AND strftime('%Y-%m', created_at) = ?`,
-            [month]
+            `SELECT t.* FROM transactions t WHERE t.type IN ('ride_fee', 'dispatch_fee') AND t.status = 'arrears' AND t.related_id IN (${areaRideIds})`,
+            []
           )
           arrearsAmount = Math.abs(arrearsTx.reduce((sum: number, t: any) => sum + t.amount, 0))
         }
@@ -163,6 +163,68 @@ router.post('/generate', authMiddleware, requireRole('admin'), async (req: Reque
     }
 
     res.json({ success: true, data: { month, message: '月度报告已生成' } })
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+router.get('/dashboard', authMiddleware, requireRole('admin'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const month = req.query.month as string
+    if (!month) {
+      res.status(400).json({ success: false, error: '请指定月份' })
+      return
+    }
+
+    const reports = queryAll('SELECT * FROM monthly_reports WHERE month = ?', [month])
+    const totalRevenue = reports.reduce((s: number, r: any) => s + r.revenue, 0)
+    const totalDispatchRevenue = reports.reduce((s: number, r: any) => s + (r.dispatch_revenue || 0), 0)
+    const totalOpsCost = reports.reduce((s: number, r: any) => s + r.ops_cost, 0)
+    const totalArrears = reports.reduce((s: number, r: any) => s + (r.arrears_amount || 0), 0)
+    const totalProfit = reports.reduce((s: number, r: any) => s + r.profit, 0)
+    const totalRides = reports.reduce((s: number, r: any) => s + r.ride_count, 0)
+
+    const overtimeTasks = queryAll(
+      `SELECT ot.*, v.code AS vehicle_code, v.area_id AS vehicle_area_id FROM ops_tasks ot LEFT JOIN vehicles v ON ot.vehicle_id = v.id WHERE ot.status != 'completed' AND (unixepoch() - unixepoch(ot.created_at)) > 7200`
+    )
+    const pendingTasks = queryAll("SELECT * FROM ops_tasks WHERE status = 'pending'")
+
+    const areas = queryAll('SELECT * FROM areas')
+    const areaBreakdown = reports.map((r: any) => {
+      const area = areas.find((a: any) => a.id === r.area_id)
+      return {
+        areaId: r.area_id,
+        areaName: area?.name || '',
+        revenue: r.revenue,
+        dispatchRevenue: r.dispatch_revenue || 0,
+        opsCost: r.ops_cost,
+        arrearsAmount: r.arrears_amount || 0,
+        profit: r.profit,
+      }
+    })
+
+    res.json({
+      success: true,
+      data: {
+        month,
+        revenue: Math.round(totalRevenue * 100) / 100,
+        dispatchRevenue: Math.round(totalDispatchRevenue * 100) / 100,
+        opsCost: totalOpsCost,
+        arrearsAmount: Math.round(totalArrears * 100) / 100,
+        profit: Math.round(totalProfit * 100) / 100,
+        rideCount: totalRides,
+        overtimeTaskCount: overtimeTasks.length,
+        pendingTaskCount: pendingTasks.length,
+        areaBreakdown,
+        overtimeTasks: overtimeTasks.map((t: any) => ({
+          id: t.id,
+          type: t.type,
+          vehicleCode: t.vehicle_code,
+          vehicleAreaId: t.vehicle_area_id,
+          createdAt: t.created_at,
+        })),
+      },
+    })
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message })
   }
